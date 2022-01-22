@@ -30,20 +30,21 @@ mod tests;
 /// differentiate the relevant event sources. Events and signals correspond to the bits of the
 // value returned by `as_bits()`.
 ///
-/// # Example
+/// # Examples
+///
 /// ```
 /// # use nb_executor::EventMask;
 /// use bitflags::bitflags;
 ///
 /// bitflags! {
-///     struct Signal: u32 {
+///     struct Ev: u32 {
 ///         const USB_RX = 1 << 0;
 ///         const PRIO = 1 << 1;
 ///         const TICK = 1 << 2;
 ///     }
 /// }
 ///
-/// impl EventMask for Signal {
+/// impl EventMask for Ev {
 ///     fn as_bits(self) -> u32 {
 ///         self.bits()
 ///     }
@@ -112,6 +113,73 @@ pub struct Signals<'a, S> {
 ///
 /// - Finally, [`Executor::run_with_park()`] blocks and resolves the future while external
 ///   event sources direct it through the event mask, possibly with help from the park function.
+///
+/// # Examples
+///
+/// This is a complete usage example. It uses `std::sync` primitives and a park function based on
+/// `std::thread::park()` to multiply the integers from 1 to 10 read from a blocking queue.
+///
+/// ```
+/// # use nb_executor::*;
+/// # use bitflags::bitflags;
+/// use std::{thread, sync::{mpsc::*, Arc}};
+///
+/// bitflags! {
+///     struct Ev: u32 {
+///         const QUEUE = 1 << 0;
+///     }
+/// }
+///
+/// impl EventMask for Ev {
+///     fn as_bits(self) -> u32 {
+///         self.bits()
+///     }
+/// }
+///
+/// async fn recv(signals: &Signals<'_, Ev>, rx: &Receiver<u32>) -> Option<u32> {
+///     signals.drive_infallible(Ev::QUEUE, || match rx.try_recv() {
+///         Ok(n) => Ok(Some(n)),
+///         Err(TryRecvError::Disconnected) => Ok(None),
+///         Err(TryRecvError::Empty) => Err(nb::Error::WouldBlock),
+///     }).await
+/// }
+///
+/// let events = Arc::new(Events::default());
+/// let signals = Signals::watch(&events);
+///
+/// let (tx, rx) = sync_channel(1);
+/// let future = async {
+///     let mut product = 1;
+///     while let Some(n) = recv(&signals, &rx).await {
+///         product *= n;
+///     }
+///
+///     product
+/// };
+///
+/// let events_prod = Arc::clone(&events);
+/// let runner = thread::current();
+///
+/// thread::spawn(move || {
+///     for n in 1..=10 {
+///         tx.send(n).unwrap();
+///         events_prod.raise(Ev::QUEUE);
+///         runner.unpark();
+///     }
+/// });
+///
+/// let result = Executor::bind(&signals).run_with_park(future, |park| {
+///     // thread::park() is event-safe, no lock is required
+///     let parked = park.race_free();
+///     if parked.is_idle() {
+///         thread::park();
+///     }
+///
+///     parked
+/// });
+///
+/// assert_eq!(result, (1..=10).product()); // 3628800
+/// ```
 pub struct Executor<'a, S> {
     signals: &'a Signals<'a, S>,
     waker: Waker,
