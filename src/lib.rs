@@ -3,9 +3,9 @@
 
 use core::{
     cell::Cell,
+    convert::Infallible,
     future::Future,
     marker::PhantomData,
-    pin::Pin,
     sync::atomic::{AtomicU32, Ordering::Relaxed},
     task::{Context, Poll, Waker},
 };
@@ -68,16 +68,36 @@ impl<'a, S: Mask> Signals<'a, S> {
         }
     }
 
-    pub async fn drive<T, E, F>(&self, signal: S, poll: F) -> Result<T, E>
+    pub async fn drive<T, E, F>(&self, signal: S, mut poll: F) -> Result<T, E>
     where
         F: Unpin + FnMut() -> nb::Result<T, E>,
     {
-        (Drive {
-            run: &self.run,
-            mask: signal.as_bits(),
-            poll,
+        let mask = signal.as_bits();
+
+        futures::future::poll_fn(move |_| {
+            let run = self.run.get();
+
+            if run.raised & mask != 0 {
+                match poll() {
+                    Ok(ok) => return Poll::Ready(Ok(ok)),
+                    Err(nb::Error::Other(err)) => return Poll::Ready(Err(err)),
+                    Err(nb::Error::WouldBlock) => (),
+                }
+            }
+
+            let wakeup = run.wakeup | mask;
+            self.run.set(Run { wakeup, ..run });
+
+            Poll::Pending
         })
         .await
+    }
+
+    pub async fn drive_infallible<T, F>(&self, signal: S, poll: F) -> T
+    where
+        F: Unpin + FnMut() -> nb::Result<T, Infallible>,
+    {
+        self.drive(signal, poll).await.unwrap()
     }
 }
 
@@ -156,34 +176,4 @@ impl Parked<'_> {
 struct Run {
     raised: u32,
     wakeup: u32,
-}
-
-struct Drive<'a, F> {
-    run: &'a Cell<Run>,
-    mask: u32,
-    poll: F,
-}
-
-impl<T, E, F> Future for Drive<'_, F>
-where
-    F: Unpin + FnMut() -> nb::Result<T, E>,
-{
-    type Output = Result<T, E>;
-
-    fn poll(mut self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Self::Output> {
-        let run = self.run.get();
-
-        if run.raised & self.mask != 0 {
-            match (self.poll)() {
-                Ok(ok) => return Poll::Ready(Ok(ok)),
-                Err(nb::Error::Other(err)) => return Poll::Ready(Err(err)),
-                Err(nb::Error::WouldBlock) => (),
-            }
-        }
-
-        let wakeup = run.wakeup | self.mask;
-        self.run.set(Run { wakeup, ..run });
-
-        Poll::Pending
-    }
 }

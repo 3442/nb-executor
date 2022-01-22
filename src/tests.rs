@@ -1,7 +1,7 @@
 use super::*;
 use bitflags::bitflags;
 use futures::task;
-use std::{convert::Infallible, sync::Arc, sync::Once};
+use std::{sync::Arc, sync::Once};
 
 #[test]
 fn waker() {
@@ -12,7 +12,7 @@ fn waker() {
     let waker = task::waker(Arc::clone(&events));
 
     let future = async {
-        let wait = signals.drive(Signal::B, || -> nb::Result<_, Infallible> {
+        let wait = signals.drive_infallible(Signal::B, || {
             once.is_completed().then(|| ()).ok_or(nb::Error::WouldBlock)
         });
 
@@ -21,8 +21,7 @@ fn waker() {
             waker.wake_by_ref();
         };
 
-        let (result, ()) = futures::join!(wait, wake);
-        result.unwrap()
+        let ((), ()) = futures::join!(wait, wake);
     };
 
     Executor::bind(&signals)
