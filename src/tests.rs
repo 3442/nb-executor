@@ -42,7 +42,7 @@ bitflags! {
     }
 }
 
-impl Mask for Signal {
+impl EventMask for Signal {
     fn as_bits(self) -> u32 {
         self.bits()
     }

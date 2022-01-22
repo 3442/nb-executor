@@ -15,7 +15,7 @@ use futures::{pin_mut, task::noop_waker};
 #[cfg(test)]
 mod tests;
 
-pub trait Mask: Copy {
+pub trait EventMask: Copy {
     fn as_bits(self) -> u32;
 }
 
@@ -54,13 +54,13 @@ impl<S> Default for Events<S> {
     }
 }
 
-impl<S: Mask> Events<S> {
+impl<S: EventMask> Events<S> {
     pub fn raise(&self, signal: S) {
         self.events.fetch_or(signal.as_bits(), Relaxed);
     }
 }
 
-impl<'a, S: Mask> Signals<'a, S> {
+impl<'a, S: EventMask> Signals<'a, S> {
     pub fn watch(pending: &'a Events<S>) -> Self {
         Signals {
             pending,
