@@ -154,6 +154,10 @@ impl<S> Executor<'_, S> {
             }
         }
     }
+
+    pub fn run_busy<F: Future>(&mut self, future: F) -> F::Output {
+        self.run_with_park(future, |park| park.race_free())
+    }
 }
 
 impl<'a> Park<'a> {
