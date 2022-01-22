@@ -286,7 +286,7 @@ impl<'a, S: EventMask> Signals<'a, S> {
     /// may not block.
     pub async fn drive<T, E, F>(&self, signals: S, mut poll: F) -> Result<T, E>
     where
-        F: Unpin + FnMut() -> nb::Result<T, E>,
+        F: FnMut() -> nb::Result<T, E>,
     {
         let mask = signals.as_bits();
 
@@ -318,7 +318,7 @@ impl<'a, S: EventMask> Signals<'a, S> {
     /// `option.ok_or(WouldBlock)`.
     pub async fn drive_infallible<T, F>(&self, signals: S, poll: F) -> T
     where
-        F: Unpin + FnMut() -> nb::Result<T, Infallible>,
+        F: FnMut() -> nb::Result<T, Infallible>,
     {
         self.drive(signals, poll).await.unwrap()
     }
