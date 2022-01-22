@@ -1,14 +1,14 @@
 [package]
 name = "nb-executor"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Alejandro Soto <alejandro@34project.org>"]
 edition = "2021"
 description = "Single-future, #![no_std] executor based on event bitmasks"
 license = "Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/3442/nb-executor"
-keywords = []
-categories = []
+keywords = ["executor", "async", "non-blocking"]
+categories = ["asynchronous", "no-std"]
 
 [dependencies]
 futures = { version = "0.3.19", default-features = false }
