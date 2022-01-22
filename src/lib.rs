@@ -1,4 +1,4 @@
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 #![forbid(unsafe_code)]
 
 use core::{
@@ -11,6 +11,9 @@ use core::{
 };
 
 use futures::{pin_mut, task::noop_waker};
+
+#[cfg(test)]
+mod tests;
 
 pub trait Mask: Copy {
     fn as_bits(self) -> u32;
