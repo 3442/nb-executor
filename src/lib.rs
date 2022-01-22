@@ -1,7 +1,7 @@
 //! Single-future, `#![no_std]` executor based on event bitmasks.
 //!
 //! See `README.md` for a brief overview. [`Executor`] describes the most important elements
-//! needed to get started.
+//! to get started.
 
 #![cfg_attr(not(test), no_std)]
 #![forbid(unsafe_code)]
