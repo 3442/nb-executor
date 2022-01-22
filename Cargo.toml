@@ -7,6 +7,7 @@ description = "Single-future, #![no_std] executor based on event bitmasks"
 license = "Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/3442/nb-executor"
+documentation = "https://docs.rs/nb-executor"
 keywords = ["executor", "async", "non-blocking"]
 categories = ["asynchronous", "no-std"]
 
