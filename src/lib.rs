@@ -18,6 +18,9 @@ use core::{
 
 use futures::{pin_mut, task::noop_waker};
 
+pub use futures;
+pub use nb;
+
 #[cfg(test)]
 mod tests;
 
