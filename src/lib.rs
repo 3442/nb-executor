@@ -112,8 +112,8 @@ pub struct Signals<'a, S> {
 /// - A future is created. It needs a reference to the `Signals` object in order to drive
 ///   poll functions, making it `!Sync` too.
 ///
-/// - Finally, [`Executor::block_with_park()`] blocks and resolves the future while external
-///   event sources direct it through the event mask, possibly with help from the park function.
+/// - Finally, [`Executor::block_on()`] blocks and resolves the future while external event
+///   sources direct it through the event mask, possibly with help from the park function.
 ///
 /// # Examples
 ///
@@ -174,7 +174,7 @@ pub struct Signals<'a, S> {
 ///     runner.unpark();
 /// });
 ///
-/// let result = signals.bind().block_with_park(future, |park| {
+/// let result = signals.bind().block_on(future, |park| {
 ///     // thread::park() is event-safe, no lock is required
 ///     let parked = park.race_free();
 ///     if parked.is_idle() {
@@ -198,7 +198,7 @@ pub struct Executor<'a> {
 /// control over execution and control flow. `Step` can only perform one poll step at a time
 /// and requires a pinned future. A `Step` object is created by calling [`Executor::step()`].
 ///
-/// See [`Executor::block_with_park()`] for a blocking runner.
+/// See [`Executor::block_on()`] for a blocking runner.
 pub struct Step<'exec, 'fut, F, P> {
     executor: Executor<'exec>,
     wakeup: u32,
@@ -248,7 +248,7 @@ pub struct Step<'exec, 'fut, F, P> {
 ///
 /// # Delegating out of the park function
 ///
-/// Blocking runners, such as [`Executor::block_with_park()`], require that the park function's
+/// Blocking runners, such as [`Executor::block_on()`], require that the park function's
 /// event-safe context be exited in an atomic manner with respect to the start of whatever
 /// blocking operation. However, this requirement does not hold for [`Step`] **as long as
 /// the park function never exits the event-safe context and it itself never blocks**. Since
@@ -397,10 +397,10 @@ impl<'exec> Executor<'exec> {
     /// Begin stepped execution.
     ///
     /// This allows the caller to remain in control of program flow in between polls, unlike
-    /// [`Executor::block_with_park()`]. The future is run as specified in [`Step`] and
-    /// [`Signals`]. `park` is a park function and must follow the [`Park`] protocol. The
-    /// caller and the park function may cooperate to block or sleep outside of the park
-    /// function within the protocol requirements.
+    /// [`Executor::block_on()`]. The future is run as specified in [`Step`] and [`Signals`].
+    /// `park` is a park function and must follow the [`Park`] protocol. The caller and the
+    /// park function may cooperate to block or sleep outside of the park function within the
+    /// protocol's requirements.
     pub fn step<'fut, F, P>(self, future: Pin<&'fut mut F>, park: P) -> Step<F, P>
     where
         F: Future,
@@ -431,7 +431,7 @@ impl<'exec> Executor<'exec> {
     ///   this protocol.
     ///
     /// See also [`Step`] and [`Executor::step()`].
-    pub fn block_with_park<F, P>(self, future: F, park: P) -> F::Output
+    pub fn block_on<F, P>(self, future: F, park: P) -> F::Output
     where
         F: Future,
         P: FnMut(Park) -> Parked,
@@ -449,11 +449,11 @@ impl<'exec> Executor<'exec> {
 
     /// Execute a future in a busy-waiting loop.
     ///
-    /// This is equivalent to calling [`Executor::block_with_park()`] with a park function that
+    /// This is equivalent to calling [`Executor::block_on()`] with a park function that
     /// never sleeps. This is most likely the wrong way to do whatever you intend, prefer to
     /// define a proper wake function.
-    pub fn block_busy<F: Future>(self, future: F) -> F::Output {
-        self.block_with_park(future, |park| park.race_free())
+    pub fn block_busy_on<F: Future>(self, future: F) -> F::Output {
+        self.block_on(future, |park| park.race_free())
     }
 }
 
