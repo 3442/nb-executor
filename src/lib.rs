@@ -99,12 +99,12 @@ pub struct Signals<'a, S> {
 ///   items or other types of shared state. Distribute event mask references to the external
 ///   event sources and keep one for the executor.
 ///
-/// - The event mask is then watched with [`Signals::watch()`]. The resulting [`Signals`] is
+/// - The event mask is then watched with [`Events::watch()`]. The resulting [`Signals`] is
 ///   `Send + !Sync`. This means that operations become limited to one thread of execution
 ///   from this point on, so this is usually done in some type of initialization or main
 ///   function instead of in a shared or global context.
 ///
-/// - A new executor is bound with [`Executor::bind()`]. Executors are `!Send + !Sync`:
+/// - A new executor is bound with [`Signals::bind()`]. Executors are `!Send + !Sync`:
 ///   neither it nor the associated `Signals` may escape the current thread. This makes them
 ///   appropriate for construction at the use site.
 ///
@@ -145,7 +145,7 @@ pub struct Signals<'a, S> {
 /// }
 ///
 /// let events = Arc::new(Events::default());
-/// let signals = Signals::watch(&events);
+/// let signals = events.watch();
 ///
 /// let (tx, rx) = sync_channel(1);
 /// let future = async {
@@ -173,7 +173,7 @@ pub struct Signals<'a, S> {
 ///     runner.unpark();
 /// });
 ///
-/// let result = Executor::bind(&signals).block_with_park(future, |park| {
+/// let result = signals.bind().block_with_park(future, |park| {
 ///     // thread::park() is event-safe, no lock is required
 ///     let parked = park.race_free();
 ///     if parked.is_idle() {
@@ -185,8 +185,9 @@ pub struct Signals<'a, S> {
 ///
 /// assert_eq!(result, (1..=10).product()); // 3628800
 /// ```
-pub struct Executor<'a, S> {
-    signals: &'a Signals<'a, S>,
+pub struct Executor<'a> {
+    pending: &'a AtomicU32,
+    run: &'a Cell<Run>,
     waker: Waker,
 }
 
@@ -253,6 +254,20 @@ impl<S> Default for Events<S> {
     }
 }
 
+impl<S> Events<S> {
+    /// Associate a new `Signals` to this event mask.
+    ///
+    /// This indirectly links the executor to the event mask, since creating an [`Executor`]
+    /// requires a `Signals`.
+    #[must_use]
+    pub fn watch(&self) -> Signals<S> {
+        Signals {
+            pending: self,
+            run: Default::default(),
+        }
+    }
+}
+
 impl<S: EventMask> Events<S> {
     /// Raise all events in a mask.
     ///
@@ -264,14 +279,16 @@ impl<S: EventMask> Events<S> {
 }
 
 impl<'a, S: EventMask> Signals<'a, S> {
-    /// Associate a new `Signals` to an event mask.
+    /// Create a new executor bound to this signal source.
     ///
-    /// This indirectly links the executor to the event mask, since creating an [`Executor`]
-    /// requires a `Signals`.
-    pub fn watch(pending: &'a Events<S>) -> Self {
-        Signals {
-            pending,
-            run: Default::default(),
+    /// The executor will be constructed with a waker that does nothing. It can be replaced
+    /// by calling [`Executor::with_waker()`].
+    #[must_use]
+    pub fn bind(&self) -> Executor {
+        Executor {
+            pending: &self.pending.events,
+            run: &self.run,
+            waker: noop_waker(),
         }
     }
 
@@ -328,29 +345,17 @@ impl<'a, S: EventMask> Signals<'a, S> {
     }
 }
 
-impl<'a, S> Executor<'a, S> {
-    /// Create a new executor with a given signal source.
-    ///
-    /// The executor will be constructed with a waker that does nothing. It can be replaced
-    /// by calling [`Executor::with_waker()`].
-    pub fn bind(signals: &'a Signals<S>) -> Self {
-        Executor {
-            signals,
-            waker: noop_waker(),
-        }
-    }
-
+impl Executor<'_> {
     /// Replaces the executor's waker with a custom one.
     ///
     /// No restrictions are imposed on the waker: `nb-executor` does not use wakers at all.
     /// Application code may define some communication between it and the park function.
+    #[must_use]
     pub fn with_waker(mut self, waker: Waker) -> Self {
         self.waker = waker;
         self
     }
-}
 
-impl<S> Executor<'_, S> {
     /// Execute a future on this executor, parking when no progress is possible.
     ///
     /// This method will block until the future resolves. There are two possible states of
@@ -374,14 +379,12 @@ impl<S> Executor<'_, S> {
     {
         pin_mut!(future);
 
-        let pending = &self.signals.pending.events;
         let mut cx = Context::from_waker(&self.waker);
-
         let (mut last_pending, mut wakeup) = (u32::MAX, u32::MAX);
 
         loop {
             if last_pending & wakeup != 0 {
-                self.signals.run.set(Run {
+                self.run.set(Run {
                     raised: last_pending,
                     wakeup: 0,
                 });
@@ -391,14 +394,21 @@ impl<S> Executor<'_, S> {
                     Poll::Pending => (),
                 }
 
-                wakeup = self.signals.run.get().wakeup;
+                wakeup = self.run.get().wakeup;
             }
 
-            last_pending = park(Park { pending, wakeup }).last_pending;
+            last_pending = park(Park {
+                pending: self.pending,
+                wakeup,
+            })
+            .last_pending;
 
             while last_pending & wakeup != 0 {
                 let cleared = last_pending & !wakeup;
-                match pending.compare_exchange_weak(last_pending, cleared, Relaxed, Relaxed) {
+                match self
+                    .pending
+                    .compare_exchange_weak(last_pending, cleared, Relaxed, Relaxed)
+                {
                     Ok(_) => break,
                     Err(current) => last_pending = current,
                 }

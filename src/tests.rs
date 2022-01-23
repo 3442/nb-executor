@@ -6,7 +6,7 @@ use std::{sync::Arc, sync::Once};
 #[test]
 fn waker() {
     let events = Arc::new(Events::default());
-    let signals = Signals::watch(&events);
+    let signals = events.watch();
 
     let once = Once::new();
     let waker = task::waker(Arc::clone(&events));
@@ -24,7 +24,8 @@ fn waker() {
         let ((), ()) = futures::join!(wait, wake);
     };
 
-    Executor::bind(&signals)
+    signals
+        .bind()
         .with_waker(waker.clone())
         .block_with_park(future, |park| {
             let parked = park.race_free();
