@@ -166,6 +166,11 @@ pub struct Signals<'a, S> {
 ///         events_prod.raise(Ev::QUEUE);
 ///         runner.unpark();
 ///     }
+///
+///     // Notify shutdown
+///     drop(tx);
+///     events_prod.raise(Ev::QUEUE);
+///     runner.unpark();
 /// });
 ///
 /// let result = Executor::bind(&signals).block_with_park(future, |park| {
