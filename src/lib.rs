@@ -94,10 +94,11 @@ pub struct Signals<'a, S> {
 /// A single-threaded, single-future async executor.
 ///
 /// # Typical setup
-/// - First, an event mask is created with [`Events::default()`]. Event masks are Send + Sync`
-///   and shared references to them are enough for all operations, so they work well as `static`
-///   items or other types of shared state. Distribute event mask references to the external
-///   event sources and keep one for the executor.
+/// - First, an event mask is created with [`Events::default()`] (or [`Events::new()`] if
+///   that needs to be `const`). Event masks are Send + Sync` and shared references to the
+///   are enough for all operations, so they work well as `static` items or other types of
+///   shared state. Distribute event mask references to the external event sources and keep
+///   one for the executor.
 ///
 /// - The event mask is then watched with [`Events::watch()`]. The resulting [`Signals`] is
 ///   `Send + !Sync`. This means that operations become limited to one thread of execution
@@ -255,6 +256,16 @@ impl<S> Default for Events<S> {
 }
 
 impl<S> Events<S> {
+    /// Construct a new event mask.
+    ///
+    /// This is the same as [`Events::default()`] but is also `const`.
+    pub const fn new() -> Self {
+        Events {
+            events: AtomicU32::new(0),
+            _phantom: PhantomData,
+        }
+    }
+
     /// Associate a new `Signals` to this event mask.
     ///
     /// This indirectly links the executor to the event mask, since creating an [`Executor`]
