@@ -26,7 +26,7 @@ fn waker() {
 
     Executor::bind(&signals)
         .with_waker(waker.clone())
-        .run_with_park(future, |park| {
+        .block_with_park(future, |park| {
             let parked = park.race_free();
             assert!(!parked.is_idle());
             parked

@@ -111,7 +111,7 @@ pub struct Signals<'a, S> {
 /// - A future is created. It needs a reference to the `Signals` object in order to drive
 ///   poll functions, making it `!Sync` too.
 ///
-/// - Finally, [`Executor::run_with_park()`] blocks and resolves the future while external
+/// - Finally, [`Executor::block_with_park()`] blocks and resolves the future while external
 ///   event sources direct it through the event mask, possibly with help from the park function.
 ///
 /// # Examples
@@ -168,7 +168,7 @@ pub struct Signals<'a, S> {
 ///     }
 /// });
 ///
-/// let result = Executor::bind(&signals).run_with_park(future, |park| {
+/// let result = Executor::bind(&signals).block_with_park(future, |park| {
 ///     // thread::park() is event-safe, no lock is required
 ///     let parked = park.race_free();
 ///     if parked.is_idle() {
@@ -196,26 +196,25 @@ pub struct Executor<'a, S> {
 /// # The park protocol
 ///
 /// - First, the executor determines that further progress is unlikely at this moment. The
-///   specifics of this are implementation details that must not be relied upon.
+///   specifics of this process are implementation details that should not be relied upon.
 ///
 /// - The park function is called with a `Park` parameter.
 ///
 /// - The park function enters a context wherein no external events may influence a correct
 ///   decision to sleep or not. For example, a park function that does not sleep at all does
-///   not need to do anything here, since no external event can incorrectly change tha
+///   not need to do anything here, since no external event can incorrectly change that
 ///   behavior. On the other hand, a park function that halts until a hardware interrupt occurs
 ///   would need to enter an interrupt-free context to avoid deadlocks.
 ///
 /// - The park function calls [`Park::race_free()`] while still in the event-safe context.
-///   This produces a [`Parked`] value that demonstrates the call to `race_free()`.
+///   This produces a [`Parked`] value that serves as proof of the call to `race_free()`.
 ///
-/// - If the park function intends to block or sleep then it must first call
-///   [`Parked::is_idle()`] and may be allowed to sleep only if it returns `true`.
+/// - If the park function intends to block or sleep, then it must first call
+///   [`Parked::is_idle()`]. It may be allowed to sleep only if that function returns `true`.
 ///
 /// - If the park function is willing to sleep and is allowed to do so, it must
-///   atomically exit the event-safe context whilst entering the sleep state. A deadlock
-///   is again possible if both operations are not done atomically with respect to each
-///   other.
+///   atomically exit the event-safe context whilst entering the sleep state. A deadlock is
+///   again possible if both operations are not done atomically with respect to each other.
 ///
 /// - If the park function sleeps, this state should be automatically exited when an external
 ///   event occurs.
@@ -340,7 +339,7 @@ impl<'a, S> Executor<'a, S> {
     ///
     /// No restrictions are imposed on the waker: `nb-executor` does not use wakers at all.
     /// Application code may define some communication between it and the park function.
-    pub fn with_waker(&mut self, waker: Waker) -> &mut Self {
+    pub fn with_waker(mut self, waker: Waker) -> Self {
         self.waker = waker;
         self
     }
@@ -361,9 +360,9 @@ impl<S> Executor<'_, S> {
     ///   time. For details, see the parking protocol in [`Park`]. `park` must adhere to
     ///   this protocol.
     ///
-    /// On method enter, the state is set to polling with an all-ones wakeup signal set.
+    /// On method enter, the state is set to polling with all-ones signal sets.
     /// This ensures that all driven poll functions are called at least once.
-    pub fn run_with_park<F, P>(&mut self, future: F, mut park: P) -> F::Output
+    pub fn block_with_park<F, P>(self, future: F, mut park: P) -> F::Output
     where
         F: Future,
         P: FnMut(Park) -> Parked,
@@ -392,7 +391,7 @@ impl<S> Executor<'_, S> {
 
             last_pending = park(Park { pending, wakeup }).last_pending;
 
-            loop {
+            while last_pending & wakeup != 0 {
                 let cleared = last_pending & !wakeup;
                 match pending.compare_exchange_weak(last_pending, cleared, Relaxed, Relaxed) {
                     Ok(_) => break,
@@ -404,11 +403,11 @@ impl<S> Executor<'_, S> {
 
     /// Execute a future in a busy-waiting loop.
     ///
-    /// This is equivalent to calling [`Executor::run_with_park()`] with a park function that
+    /// This is equivalent to calling [`Executor::block_with_park()`] with a park function that
     /// never sleeps. This is most likely the wrong way to do whatever you intend, prefer to
     /// define a proper wake function.
-    pub fn run_busy<F: Future>(&mut self, future: F) -> F::Output {
-        self.run_with_park(future, |park| park.race_free())
+    pub fn block_busy<F: Future>(self, future: F) -> F::Output {
+        self.block_with_park(future, |park| park.race_free())
     }
 }
 
