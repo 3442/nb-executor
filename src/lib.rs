@@ -12,13 +12,12 @@ use core::{
     convert::Infallible,
     future::Future,
     marker::PhantomData,
+    pin::Pin,
     sync::atomic::{AtomicU32, Ordering::Relaxed},
     task::{Context, Poll, Waker},
 };
 
-use futures::{pin_mut, task::noop_waker};
-
-pub use futures;
+pub use futures::{self, pin_mut};
 pub use nb;
 
 #[cfg(test)]
@@ -74,10 +73,11 @@ pub struct Events<S> {
 /// `Signals` maintains the signal state of an [`Executor`]. This consists of the raised signal set
 /// and the wakeup signal set. Upon polling the future, the raised signal set is frozen to the
 /// then-current value of the event mask, all bits in the wakeup signal set are removed from the
-/// event mask (atomically), and the wakeup signal set is cleared. Current poll functions which are
-/// driven by any of the raised signals will be attempted. If a poll function is not attempted or
-/// does not yet resolve to an output then its signal mask will be OR-ed into the wakeup signal
-/// set. The future won't be polled again until a raised signal matches the wakeup signal set.
+/// event mask (atomically), and the wakeup signal set is cleared. See also [`Step::poll()`]
+/// for behavior when the wakeup signal set is zero. Current poll functions which are driven
+/// by any of the raised signals will be attempted. If a poll function is not attempted or does
+/// not yet resolve to an output then its signal mask will be OR-ed into the wakeup signal set.
+/// The future won't be polled again until a raised signal matches the wakeup signal set.
 ///
 /// The type parameter `S` is an [`EventMask`].
 ///
@@ -192,6 +192,21 @@ pub struct Executor<'a> {
     waker: Waker,
 }
 
+/// A non-blocking executor-future-park state machine.
+///
+/// All executor operations are ultimately implemented with `Step`. It allows fine-grained
+/// control over execution and control flow. `Step` can only perform one poll step at a time
+/// and requires a pinned future. A `Step` object is created by calling [`Executor::step()`].
+///
+/// See [`Executor::block_with_park()`] for a blocking runner.
+pub struct Step<'exec, 'fut, F, P> {
+    executor: Executor<'exec>,
+    wakeup: u32,
+    last_pending: u32,
+    future: Pin<&'fut mut F>,
+    park: P,
+}
+
 /// A request to park the executor.
 ///
 /// Parking is the mechanism by which the executor *tries* to wait for external event sources when
@@ -221,7 +236,8 @@ pub struct Executor<'a> {
 ///
 /// - If the park function is willing to sleep and is allowed to do so, it must
 ///   atomically exit the event-safe context whilst entering the sleep state. A deadlock is
-///   again possible if both operations are not done atomically with respect to each other.
+///   again possible if both operations are not done atomically with respect to each other
+///   (**only for blocking runners, see below**).
 ///
 /// - If the park function sleeps, this state should be automatically exited when an external
 ///   event occurs.
@@ -229,6 +245,17 @@ pub struct Executor<'a> {
 /// - The park function returns its [`Parked`] token.
 ///
 /// - The executor resumes.
+///
+/// # Delegating out of the park function
+///
+/// Blocking runners, such as [`Executor::block_with_park()`], require that the park function's
+/// event-safe context be exited in an atomic manner with respect to the start of whatever
+/// blocking operation. However, this requirement does not hold for [`Step`] **as long as
+/// the park function never exits the event-safe context and it itself never blocks**. Since
+/// [`Step::poll()`] will return after parking, the caller can perform potentially-blocking
+/// operations from the event-safe context. It must still release it atomically if it will
+/// sleep, though. With this technique it is even possible for the `poll()` caller to be an
+/// external event source.
 pub struct Park<'a> {
     pending: &'a AtomicU32,
     wakeup: u32,
@@ -290,7 +317,7 @@ impl<S: EventMask> Events<S> {
 }
 
 impl<'a, S: EventMask> Signals<'a, S> {
-    /// Create a new executor bound to this signal source.
+    /// Bind a new executor to this signal source.
     ///
     /// The executor will be constructed with a waker that does nothing. It can be replaced
     /// by calling [`Executor::with_waker()`].
@@ -299,7 +326,7 @@ impl<'a, S: EventMask> Signals<'a, S> {
         Executor {
             pending: &self.pending.events,
             run: &self.run,
-            waker: noop_waker(),
+            waker: futures::task::noop_waker(),
         }
     }
 
@@ -356,8 +383,8 @@ impl<'a, S: EventMask> Signals<'a, S> {
     }
 }
 
-impl Executor<'_> {
-    /// Replaces the executor's waker with a custom one.
+impl<'exec> Executor<'exec> {
+    /// Replace the executor's waker with a custom one.
     ///
     /// No restrictions are imposed on the waker: `nb-executor` does not use wakers at all.
     /// Application code may define some communication between it and the park function.
@@ -365,6 +392,28 @@ impl Executor<'_> {
     pub fn with_waker(mut self, waker: Waker) -> Self {
         self.waker = waker;
         self
+    }
+
+    /// Begin stepped execution.
+    ///
+    /// This allows the caller to remain in control of program flow in between polls, unlike
+    /// [`Executor::block_with_park()`]. The future is run as specified in [`Step`] and
+    /// [`Signals`]. `park` is a park function and must follow the [`Park`] protocol. The
+    /// caller and the park function may cooperate to block or sleep outside of the park
+    /// function within the protocol requirements.
+    pub fn step<'fut, F, P>(self, future: Pin<&'fut mut F>, park: P) -> Step<F, P>
+    where
+        F: Future,
+        P: FnMut(Park) -> Parked,
+        'exec: 'fut,
+    {
+        Step {
+            executor: self,
+            wakeup: 0,
+            last_pending: u32::MAX,
+            future,
+            park,
+        }
     }
 
     /// Execute a future on this executor, parking when no progress is possible.
@@ -381,48 +430,19 @@ impl Executor<'_> {
     ///   time. For details, see the parking protocol in [`Park`]. `park` must adhere to
     ///   this protocol.
     ///
-    /// On method enter, the state is set to polling with all-ones signal sets.
-    /// This ensures that all driven poll functions are called at least once.
-    pub fn block_with_park<F, P>(self, future: F, mut park: P) -> F::Output
+    /// See also [`Step`] and [`Executor::step()`].
+    pub fn block_with_park<F, P>(self, future: F, park: P) -> F::Output
     where
         F: Future,
         P: FnMut(Park) -> Parked,
     {
         pin_mut!(future);
-
-        let mut cx = Context::from_waker(&self.waker);
-        let (mut last_pending, mut wakeup) = (u32::MAX, u32::MAX);
+        let mut step = self.step(future, park);
 
         loop {
-            if last_pending & wakeup != 0 {
-                self.run.set(Run {
-                    raised: last_pending,
-                    wakeup: 0,
-                });
-
-                match future.as_mut().poll(&mut cx) {
-                    Poll::Ready(output) => break output,
-                    Poll::Pending => (),
-                }
-
-                wakeup = self.run.get().wakeup;
-            }
-
-            last_pending = park(Park {
-                pending: self.pending,
-                wakeup,
-            })
-            .last_pending;
-
-            while last_pending & wakeup != 0 {
-                let cleared = last_pending & !wakeup;
-                match self
-                    .pending
-                    .compare_exchange_weak(last_pending, cleared, Relaxed, Relaxed)
-                {
-                    Ok(_) => break,
-                    Err(current) => last_pending = current,
-                }
+            match step.poll() {
+                Poll::Pending => continue,
+                Poll::Ready(ready) => break ready,
             }
         }
     }
@@ -434,6 +454,82 @@ impl Executor<'_> {
     /// define a proper wake function.
     pub fn block_busy<F: Future>(self, future: F) -> F::Output {
         self.block_with_park(future, |park| park.race_free())
+    }
+}
+
+impl<F, P> Step<'_, '_, F, P>
+where
+    F: Future,
+    P: FnMut(Park) -> Parked,
+{
+    /// Perform at most one non-blocking polling attempt.
+    ///
+    /// This method never blocks unless the park function does (or the future, but that's
+    /// totally wrong anyway). The future will be polled given any of these:
+    ///
+    /// - The wakeup signal set is zero. This is intended to provide a reset or "full scan"
+    ///   mechanism. In this case, the raised signal set will be hard-coded to all-ones,
+    ///   regardless of the current value of the event mask. **Note:** A side effect of this
+    ///   special case is that [`core::future::pending()`] and similar constructs might
+    ///   busy-loop depending on the particular park function.
+    ///
+    /// - Any bit in the wakeup signal set matches the event mask. The event mask is
+    ///   atomically frozen at the same time that this condition is check, creating the
+    ///   raised signal set.
+    ///
+    /// The wakeup signal set is cleared just before polling the future (edge-triggering).
+    /// Regardless of the poll result or if the future is polled at all, a park
+    /// operation may be triggered under implementation-defined conditions. If parking
+    /// occurs, it will be the last observable operation before `poll()` returns. The
+    /// return value will be [`Poll::Pending`] if the future is not polled. Do not call
+    /// call `poll()` again after it returns [`Poll::Ready`].
+    ///
+    /// On first call, the wakeup signal set is zero. This ensures that all driven poll
+    /// functions are attempted at least once.
+    pub fn poll(&mut self) -> Poll<F::Output> {
+        let woken = if self.wakeup == 0 {
+            self.last_pending = u32::MAX;
+            true
+        } else {
+            loop {
+                let cleared = self.last_pending & !self.wakeup;
+                let result = self.executor.pending.compare_exchange_weak(
+                    self.last_pending,
+                    cleared,
+                    Relaxed,
+                    Relaxed,
+                );
+
+                match result {
+                    Ok(current) => break cleared != current,
+                    Err(current) => self.last_pending = current,
+                }
+            }
+        };
+
+        if !woken {
+            return Poll::Pending;
+        }
+
+        self.executor.run.set(Run {
+            raised: self.last_pending,
+            wakeup: 0,
+        });
+
+        let mut cx = Context::from_waker(&self.executor.waker);
+        let poll = self.future.as_mut().poll(&mut cx);
+
+        if poll.is_pending() {
+            self.wakeup = self.executor.run.get().wakeup;
+            let park = Park {
+                pending: self.executor.pending,
+                wakeup: self.wakeup,
+            };
+
+            self.last_pending = (self.park)(park).last_pending;
+        }
+
+        poll
     }
 }
 
@@ -457,13 +553,13 @@ impl Parked<'_> {
     /// Check whether useful work is certainly not possible until an event is raised.
     ///
     /// Unlike the calling of the park function, this is not an optimistic operation.
-    /// Its result will be exact as long as the park protocol is correctly followed.
+    /// Its result will be exact as long as the [`Park`] protocol is correctly followed.
     /// A return value of `false` prohibits the park function from sleeping at all:
     /// it should yield control to the executor immediately. A return value of `true`
     /// is a strong hint to sleep, block, or otherwise take over control flow until
     /// some unspecified condition, ideally until an event is raised.
     ///
-    /// See also the park protocol in [`Park`].
+    /// See also the [`Park`] protocol.
     pub fn is_idle(&self) -> bool {
         self.last_pending & self.wakeup == 0
     }
