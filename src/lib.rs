@@ -330,6 +330,11 @@ impl<'a, S: EventMask> Signals<'a, S> {
         }
     }
 
+    /// Retrieve the underlying event mask.
+    pub fn pending(&self) -> &Events<S> {
+        self.pending
+    }
+
     /// Asynchronously drive a fallible poll function to completion.
     ///
     /// The future produced by this method checks on each poll whether any of the signals
