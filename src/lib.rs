@@ -95,7 +95,7 @@ pub struct Signals<'a, S> {
 ///
 /// # Typical setup
 /// - First, an event mask is created with [`Events::default()`] (or [`Events::new()`] if
-///   that needs to be `const`). Event masks are Send + Sync` and shared references to the
+///   that needs to be `const`). Event masks are `Send + Sync` and shared references to them
 ///   are enough for all operations, so they work well as `static` items or other types of
 ///   shared state. Distribute event mask references to the external event sources and keep
 ///   one for the executor.
