@@ -4,6 +4,7 @@
 //! to get started.
 
 #![cfg_attr(not(test), no_std)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
@@ -22,6 +23,12 @@ pub use nb;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(feature = "heapless")]
+mod collections;
+
+#[cfg(feature = "heapless")]
+pub use collections::Mpmc;
 
 /// Definition of event bits.
 ///
