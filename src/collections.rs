@@ -48,10 +48,17 @@ impl<T, const N: usize> Mpmc<T, N> {
     /// Removes an item from the queue.
     ///
     /// If the queue is empty, this will wait on `ev` until an item is enqueued.
+    /// After removing an item, `ev` will be raised to notify producers of available
+    /// space in the queue.
     pub async fn dequeue<S: EventMask>(&self, signals: &Signals<'_, S>, ev: S) -> T {
-        signals
-            .drive_infallible(ev, || self.0.dequeue().ok_or(WouldBlock))
-            .await
+        let dequeued = signals.drive_infallible(ev, || {
+            let item = self.0.dequeue().ok_or(WouldBlock)?;
+
+            signals.pending().raise(ev);
+            Ok(item)
+        });
+
+        dequeued.await
     }
 }
 
