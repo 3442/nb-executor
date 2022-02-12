@@ -342,15 +342,16 @@ impl<'a, S: EventMask> Signals<'a, S> {
         self.pending
     }
 
-    /// Asynchronously drive a fallible poll function to completion.
+    /// Asynchronously drive a fallible poll function to completion
     ///
     /// The future produced by this method checks on each poll whether any of the signals
-    /// in `signals` is present in the raised signal set. If that is the case, it invokes
-    /// the poll function. If the poll function succeeds or fails with [`nb::Error::Other`],
-    /// the future completes immediately with that value. If the poll function returns
-    /// [`nb::Error::WouldBlock`], or if none of the signals in `signals` is present in the
-    /// raised signal sent, then `signals` is added to the wakeup signal set and the
-    /// future pends.
+    /// in `signals` is present in the raised signal set. If that is so, it invokes the poll
+    /// function. On first poll, this check is omitted, thus guaranteeing at least one call
+    /// to the poll function. If the poll function succeeds or fails with
+    /// [`nb::Error::Other`], the future completes immediately with that value. If the poll
+    /// function returns [`nb::Error::WouldBlock`], or if none of the signals in `signals`
+    /// is present in the raised signal sent, then `signals` is added to the wakeup signal
+    /// set and the future pends.
     ///
     /// `poll()` must handle spurious calls gracefully. There is no guarantee that any of
     /// the intended effects of any signal in `signals` has actually taken place. `poll()`
@@ -360,11 +361,14 @@ impl<'a, S: EventMask> Signals<'a, S> {
         F: FnMut() -> nb::Result<T, E>,
     {
         let mask = signals.as_bits();
+        let mut first_poll = true;
 
         futures::future::poll_fn(move |_| {
             let run = self.run.get();
 
-            if run.raised & mask != 0 {
+            if first_poll || run.raised & mask != 0 {
+                first_poll = false;
+
                 match poll() {
                     Ok(ok) => return Poll::Ready(Ok(ok)),
                     Err(nb::Error::Other(err)) => return Poll::Ready(Err(err)),
