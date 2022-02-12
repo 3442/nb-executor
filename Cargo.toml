@@ -1,6 +1,6 @@
 [package]
 name = "nb-executor"
-version = "0.3.0"
+version = "0.3.1"
 authors = ["Alejandro Soto <alejandro@34project.org>"]
 edition = "2021"
 description = "Single-future, #![no_std] executor based on event bitmasks"
