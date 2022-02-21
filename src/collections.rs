@@ -7,9 +7,14 @@ use super::{EventMask, Signals};
 ///
 /// This wraps a [`MpMcQueue`] from the `heapless` crate, adding support for
 /// asynchronous enqueue and dequeue operations. `N` must be a power of two.
-#[derive(Default)]
 #[cfg_attr(docsrs, doc(cfg(feature = "heapless")))]
 pub struct Mpmc<T, const N: usize>(MpMcQueue<T, N>);
+
+impl<T, const N: usize> Default for Mpmc<T, N> {
+    fn default() -> Self {
+        Mpmc(Default::default())
+    }
+}
 
 impl<T, const N: usize> Mpmc<T, N> {
     /// Creates an empty queue.
