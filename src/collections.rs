@@ -1,7 +1,7 @@
+use super::{EventMask, Signals};
+use core::convert::Infallible;
 use heapless::mpmc::MpMcQueue;
 use nb::Error::WouldBlock;
-
-use super::{EventMask, Signals};
 
 /// Multi-producer, multi-consumer, fixed-capacity async queue.
 ///
@@ -27,27 +27,39 @@ impl<T, const N: usize> Mpmc<T, N> {
         &self.0
     }
 
-    /// Puts an item in the queue.
+    /// Adds an item to the queue.
     ///
     /// If the queue is full, this will wait on `ev` until a successful insertion.
     /// After inserting the item, `ev` will be raised in order to signal producers.
     pub async fn enqueue<S: EventMask>(&self, item: T, signals: &Signals<'_, S>, ev: S) {
         let mut item = Some(item);
         let queued = signals.drive_infallible(ev, move || {
-            match self.0.enqueue(item.take().ok_or(WouldBlock)?) {
-                Ok(()) => {
-                    signals.pending().raise(ev);
-                    Ok(())
-                }
-
-                Err(returned) => {
+            self.try_enqueue(item.take().ok_or(WouldBlock)?, signals, ev)
+                .map_err(|returned| {
                     item = Some(returned);
-                    Err(WouldBlock)
-                }
-            }
+                    WouldBlock
+                })
         });
 
         queued.await
+    }
+
+    /// Attempts to add an item to the queue.
+    ///
+    /// If the queue is currently full, the item is returned in the `Err` variant.
+    /// See also [`Mpmc::enqueue()`].
+    pub fn try_enqueue<S: EventMask>(
+        &self,
+        item: T,
+        signals: &Signals<'_, S>,
+        ev: S,
+    ) -> Result<(), T> {
+        let result = self.0.enqueue(item);
+        if let Ok(()) = result {
+            signals.pending().raise(ev);
+        }
+
+        result
     }
 
     /// Removes an item from the queue.
@@ -56,14 +68,23 @@ impl<T, const N: usize> Mpmc<T, N> {
     /// After removing an item, `ev` will be raised to notify producers of available
     /// space in the queue.
     pub async fn dequeue<S: EventMask>(&self, signals: &Signals<'_, S>, ev: S) -> T {
-        let dequeued = signals.drive_infallible(ev, || {
-            let item = self.0.dequeue().ok_or(WouldBlock)?;
+        signals
+            .drive_infallible(ev, || self.try_dequeue(signals, ev))
+            .await
+    }
 
-            signals.pending().raise(ev);
-            Ok(item)
-        });
+    /// Attempts to remove an item from the queue.
+    ///
+    /// This will return `WouldBlock` if the queue is empty. See also [`Mpmc::dequeue()`].
+    pub fn try_dequeue<S: EventMask>(
+        &self,
+        signals: &Signals<'_, S>,
+        ev: S,
+    ) -> nb::Result<T, Infallible> {
+        let item = self.0.dequeue().ok_or(WouldBlock)?;
 
-        dequeued.await
+        signals.pending().raise(ev);
+        Ok(item)
     }
 }
 
