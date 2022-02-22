@@ -56,7 +56,7 @@ pub use collections::Mpmc;
 ///     }
 /// }
 /// ```
-pub trait EventMask: Copy {
+pub trait EventMask: Copy + 'static {
     /// Get the `u32` bitmask.
     fn as_bits(self) -> u32;
 }
