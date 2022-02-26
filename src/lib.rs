@@ -337,6 +337,23 @@ impl<'a, S: EventMask> Signals<'a, S> {
         }
     }
 
+    /// Raise a signal set without delays.
+    ///
+    /// This will perform the equivalent of [`pending().raise(signals)`], but it will
+    /// also update the raised signal set. This prevents the "delayed signals" effect
+    /// that is shown above. Prefer `raise()` if another branch of this future (such as
+    /// in [`futures::join!()`] might benefit from this, otherwise use `pending().raise()`.
+    /// It is impossible to visibly influence a well-behaved poll function by switching
+    /// between `raise()` or `pending().raise()` at any call site; this is a best-effort
+    /// optimization only.
+    pub fn raise(&self, signals: S) {
+        self.pending.raise(signals);
+
+        let run = self.run.get();
+        let raised = run.raised | signals.as_bits();
+        self.run.set(Run { raised, ..run });
+    }
+
     /// Retrieve the underlying event mask.
     pub fn pending(&self) -> &Events<S> {
         self.pending

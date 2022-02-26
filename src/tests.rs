@@ -53,7 +53,6 @@ fn queue() {
     };
 
     let future = async { futures::join!(producer, consumer) };
-
     signals.bind().block_on(future, park_test);
 }
 
