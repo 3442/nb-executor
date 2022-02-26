@@ -56,7 +56,7 @@ impl<T, const N: usize> Mpmc<T, N> {
     ) -> Result<(), T> {
         let result = self.0.enqueue(item);
         if let Ok(()) = result {
-            signals.pending().raise(ev);
+            signals.raise(ev);
         }
 
         result
@@ -83,7 +83,7 @@ impl<T, const N: usize> Mpmc<T, N> {
     ) -> nb::Result<T, Infallible> {
         let item = self.0.dequeue().ok_or(WouldBlock)?;
 
-        signals.pending().raise(ev);
+        signals.raise(ev);
         Ok(item)
     }
 }
