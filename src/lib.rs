@@ -89,10 +89,12 @@ pub struct Events<S> {
 /// The type parameter `S` is an [`EventMask`].
 ///
 /// # Delayed signals
-/// The executor will examine the event mask after polling the future to check for any immediate
-/// updates. Since the raised signal set remains frozen during polling, any signal raised by the
-/// future itself won't become visible until this happens. This also means that external events are
-/// not tested for until the future yields. Correct programs are not able to observe this behavior.
+/// The executor will examine the event mask after polling the future to check for any
+/// immediate updates. Since the raised signal set remains frozen during polling, any signal
+/// raised by the future itself through [`Events`] won't become visible until this happens.
+/// This also means that external events are not tested for until the future yields. As an
+/// optimization for the first case, [`Signals::raise()`] updates the raised signal set
+/// immediately. Correct programs are not able to observe this behavior.
 pub struct Signals<'a, S> {
     pending: &'a Events<S>,
     run: Cell<Run>,
