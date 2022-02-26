@@ -34,7 +34,7 @@ pub use collections::Mpmc;
 ///
 /// Implementors should be simple wrappers around `u32` that allow application code to clearly
 /// differentiate the relevant event sources. Events and signals correspond to the bits of the
-// value returned by `as_bits()`.
+/// value returned by `as_bits()`.
 ///
 /// # Examples
 ///
@@ -389,8 +389,8 @@ impl<'a, S: EventMask> Signals<'a, S> {
     /// This is a variant of [`Signals::drive()`] intended for cases where there is no
     /// proper error type. Although `drive(sig, poll).await.unwrap()` works the same, it
     /// often requires explicit type annotations if `poll` is a closure. This method should
-    /// be preferre in such cases, as well as when `poll` is a wrapper around
-    /// `option.ok_or(WouldBlock)`.
+    /// be preferred in such cases, such as when `poll` is just a wrapper around
+    /// `some_option.ok_or(WouldBlock)`.
     pub async fn drive_infallible<T, F>(&self, signals: S, poll: F) -> T
     where
         F: FnMut() -> nb::Result<T, Infallible>,
@@ -550,7 +550,7 @@ where
 }
 
 impl<'a> Park<'a> {
-    /// Promise that new events won't race with sleeps and get a proof of parking.
+    /// Promise that new events won't race with sleeps, then get a proof of parking.
     ///
     /// Park functions must call this method to obtain the [`Parked`] object that they
     /// return, which also allows them to determine sleep permissibility. The caller
